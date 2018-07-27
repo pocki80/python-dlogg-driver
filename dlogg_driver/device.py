@@ -79,13 +79,13 @@ class DLoggDevice(object):
         return OneDlHeader(self._transceive([Cmd.GET_HEADER], 13))
 
     def get_current_data(self):
-        return Uvr1611CurrentData(self._transceive([Cmd.GET_CURRENT_DATA], 57))
+        return Uvr1611CurrentData(self._transceive([Cmd.GET_CURRENT_DATA], 55))
 
     def fetch_data(self, address):
         tx_data = [Cmd.GET_DATA_RANGE]
         tx_data += address.array
         tx_data += [0x01]   # count of data frames to read
-        return Uvr1611MemoryData(self._transceive(tx_data, 65, checksum=True))
+        return Uvr1611MemoryData(self._transceive(tx_data, 63, checksum=True))
 
     def fetch_data_range(self, start_addr, length):
         data = []
