@@ -130,7 +130,7 @@ class DateTime(object):
         self.year = 2000 + raw_data[5]
 
     def __unicode__(self):
-        return u"{}-{}-{}_{}:{}:{}".format(self.year, self.month, self.day,
+        return u"{}-{:02d}-{:02d}_{:02d}:{:02d}:{:02d}".format(self.year, self.month, self.day,
                                            self.hours, self.minutes, self.seconds)
 
 
@@ -155,11 +155,15 @@ class InputData(object):
             self.value = 1 if word & 0x8000 else 0
             self.unit = u""
         elif self.type == InputDataSignalType.TEMPERATURE:
-            if word & 0x8000:
+            if word & 0x0FFF == 0xFFF:
+                self.value = 0
+                self.unit = u""
+            elif word & 0x8000:
                 self.value = (((word & 0x0FFF) ^ 0x0FFF) + 0x01) / -10.0
+                self.unit = u"°C"
             else:
                 self.value = (word & 0x0FFF) / 10.0
-            self.unit = u"°C"
+                self.unit = u"°C"
         elif self.type == InputDataSignalType.ROOM_TEMPERATURE:
             self.room = (word & 0x600) >> 9
             if word & 0x8000:
@@ -196,6 +200,20 @@ class PumpSpeed(object):
         return u"[{}] {}{}".format(self.controller_active, self.value, self.unit)
 
 
+class PowerMeter(object):
+    def __init__(self, state, raw_data):
+        self.controller_active = state
+        self.current = sum(unpack("<h", raw_data[0:2]))/10.0
+        self.kwh = sum(unpack("<h", raw_data[2:4]))/10.0
+        self.mwh = sum(unpack("<h", raw_data[4:6]))
+
+    def __unicode__(self):
+        if self.controller_active:
+            return u"[{}] {}kW {}{:3.1f}kWh".format(self.controller_active, self.current, self.mwh, self.kwh)
+        else:
+            return u"[{}]".format(self.controller_active)
+
+
 class Uvr1611Data(object):
     def __init__(self, raw_data, offset):
         self.raw = bytearray(raw_data)
@@ -204,11 +222,17 @@ class Uvr1611Data(object):
         for i in range(0, 16):
             self.inputs.append(InputData(data[i*2:i*2+2]))
         self.outputs = list()
-        for i in range(0, 13):
-            self.outputs.append(True if unpack("<H", data[32:34])[0] & 1 << i else False)
+        for i in range(0, 3):
+            self.outputs.append(True if (data[30] & 1 << i) else False)
+        for i in range(0, 2):
+            self.outputs.append(str((data[32+i] & 0x7f)/10.0)+"V" if (data[32+i] >> 7) else False)
         self.pump_speeds = list()
-        for i in range(0, 4):
-            self.pump_speeds.append(PumpSpeed(data[34+i]))
+        for i in range(0, 1):
+            self.pump_speeds.append(PumpSpeed(data[31+i]))
+        self.power_meters = list()
+        for i in range(0, 3):
+            self.power_meters.append(PowerMeter(True if (data[34] & 1 << i) else False, data[35+6*i:41+6*i]))
+
         # self.wmz_active = raw_data[38]
         # self.solar_1_power = unpack(">I", raw_data[39:43])
         # self.solar_1_kwh = unpack(">H", raw_data[43:45])
@@ -226,6 +250,7 @@ class Uvr1611Data(object):
         text += u"  inputs:       {}\n".format(u", ".join([unicode(x) for x in self.inputs]))
         text += u"  outputs:      {}\n".format(u", ".join([unicode(x) for x in self.outputs]))
         text += u"  pump_speeds:  {}\n".format(u", ".join([unicode(x) for x in self.pump_speeds]))
+        text += u"  power_meters: {}\n".format(u", ".join([unicode(x) for x in self.power_meters]))
         # text += u"  wmz_active: {}\n".format(self.wmz_active)
         # text += u"  solar_1_power: {}\n".format(self.solar_1_power)
         # text += u"  solar_1_kwh: {}\n".format(self.solar_1_kwh)
@@ -239,15 +264,15 @@ class Uvr1611Data(object):
 class Uvr1611CurrentData(Uvr1611Data):
     def __init__(self, raw_data):
         Uvr1611Data.__init__(self, raw_data, offset=1)
-        if raw_data[0] != 0x80:
+        if raw_data[0] != 0x90:   # was 0x80 for UVR1611
             raise IOError("Unexpected data")
 
 
 class Uvr1611MemoryData(Uvr1611Data):
     def __init__(self, raw_data):
         Uvr1611Data.__init__(self, raw_data, offset=0)
-        self.datetime = DateTime(raw_data[55:61])
-        self.timestamp_s = unpack("<I", raw_data[61:64] + bytearray([0]))[0] * 10
+        self.datetime = DateTime(raw_data[53:59])
+        self.timestamp_s = unpack("<I", raw_data[59:62] + bytearray([0]))[0] * 10
 
     def __unicode__(self):
         text = Uvr1611Data.__unicode__(self)
